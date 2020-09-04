@@ -39,7 +39,7 @@ def build_md_page(page_info: parser.PageInfo, table_view: bool) -> str:
   """Given a PageInfo object, return markdown for the page.
 
   Args:
-    page_info: must be a `parser.FunctionPageInfo`, `parser.ClassPageInfo`, or
+    page_info: Must be a `parser.FunctionPageInfo`, `parser.ClassPageInfo`, or
       `parser.ModulePageInfo`
     table_view: If True, `Args`, `Returns`, `Raises` or `Attributes` will be
       converted to a tabular format while generating markdown. If False, they
@@ -163,16 +163,21 @@ def _build_type_alias_page(page_info: parser.TypeAliasPageInfo,
   """
 
   parts = [f'# {page_info.full_name}\n\n']
-  parts.append('This symbol is a Type Alias.\n\n')
+
+  parts.append('<!-- Insert buttons and diff -->\n')
+
+  parts.append('This symbol is a **type alias**.\n\n')
   parts.append(page_info.doc.brief)
   parts.append('\n\n')
 
   if page_info.signature is not None:
-    parts.append('Source:\n\n')
+    parts.append('#### Source:\n\n')
     parts.append(
         _build_signature(
             page_info, obj_name=page_info.short_name, type_alias=True))
     parts.append('\n\n')
+
+  parts.append('<!-- Placeholder for "Used in" -->\n')
 
   for item in page_info.doc.docstring_parts:
     parts.append(
@@ -184,12 +189,12 @@ def _build_type_alias_page(page_info: parser.TypeAliasPageInfo,
   return ''.join(parts)
 
 
-class _Methods(NamedTuple):
+class Methods(NamedTuple):
   info_dict: Dict[str, parser.MethodInfo]
   constructor: parser.MethodInfo
 
 
-def _split_methods(methods: List[parser.MethodInfo]) -> _Methods:
+def split_methods(methods: List[parser.MethodInfo]) -> Methods:
   """Splits the given methods list into constructors and the remaining methods.
 
   If both `__init__` and `__new__` exist on the class, then prefer `__init__`
@@ -217,12 +222,37 @@ def _split_methods(methods: List[parser.MethodInfo]) -> _Methods:
   elif new_constructor is not None:
     constructor = new_constructor
 
-  return _Methods(info_dict=method_info_dict, constructor=constructor)
+  return Methods(info_dict=method_info_dict, constructor=constructor)
 
 
-def _merge_class_and_constructor_docstring(
-    class_page_info: parser.ClassPageInfo, ctor_info: parser.MethodInfo,
-    table_view: bool) -> List[str]:
+def merge_blocks(class_page_info: parser.ClassPageInfo,
+                 ctor_info: parser.MethodInfo):
+  """Helper function to merge TitleBlock in constructor and class docstring."""
+
+  # Get the class docstring. `.doc.docstring_parts` contain the entire
+  # docstring except for the one-line docstring that's compulsory.
+  class_doc = class_page_info.doc.docstring_parts
+
+  # If constructor doesn't exist, return the class docstring as it is.
+  if ctor_info is None:
+    return class_doc
+
+  # Get the constructor's docstring parts.
+  constructor_doc = ctor_info.doc.docstring_parts
+
+  # Extract the `Arguments`/`Args` from the constructor's docstring.
+  # A constructor won't contain `Args` and `Arguments` section at once.
+  # It can contain either one of these so check for both.
+  for block in constructor_doc:
+    if isinstance(block, parser.TitleBlock):
+      if block.title.startswith(('Args', 'Arguments', 'Raises')):
+        class_doc.append(block)
+  return class_doc
+
+
+def merge_class_and_constructor_docstring(class_page_info: parser.ClassPageInfo,
+                                          ctor_info: parser.MethodInfo,
+                                          table_view: bool) -> List[str]:
   """Merges the class and the constructor docstrings.
 
   While merging, the following rules are followed:
@@ -261,24 +291,7 @@ def _merge_class_and_constructor_docstring(
               table_title_template='<h2 class="add-link">{title}</h2>'))
     return updated_doc
 
-  # Get the class docstring. `.doc.docstring_parts` contain the entire
-  # docstring except for the one-line docstring that's compulsory.
-  class_doc = class_page_info.doc.docstring_parts
-
-  # If constructor doesn't exist, return the class docstring as it is.
-  if ctor_info is None:
-    return _create_class_doc(class_doc)
-
-  # Get the constructor's docstring parts.
-  constructor_doc = ctor_info.doc.docstring_parts
-
-  # Extract the `Arguments`/`Args` from the constructor's docstring.
-  # A constructor won't contain `Args` and `Arguments` section at once.
-  # It can contain either one of these so check for both.
-  for block in constructor_doc:
-    if isinstance(block, parser.TitleBlock):
-      if block.title.startswith(('Args', 'Arguments', 'Raises')):
-        class_doc.append(block)
+  class_doc = merge_blocks(class_page_info, ctor_info)
 
   return _create_class_doc(class_doc)
 
@@ -325,7 +338,7 @@ def _build_class_page(page_info: parser.ClassPageInfo, table_view: bool) -> str:
   parts.append(_build_collapsable_aliases(page_info.aliases))
 
   # Split the methods into constructor and other methods.
-  methods = _split_methods(page_info.methods)
+  methods = split_methods(page_info.methods)
 
   # If the class has a constructor, build its signature.
   # The signature will contain the class name followed by the arguments it
@@ -340,8 +353,8 @@ def _build_class_page(page_info: parser.ClassPageInfo, table_view: bool) -> str:
 
   # Merge the class and constructor docstring.
   parts.extend(
-      _merge_class_and_constructor_docstring(page_info, methods.constructor,
-                                             table_view))
+      merge_class_and_constructor_docstring(page_info, methods.constructor,
+                                            table_view))
 
   # Add the compatibility section to the page.
   parts.append(_build_compatibility(page_info.doc.compatibility))
@@ -412,10 +425,10 @@ def _other_members(other_members):
   """
   parts = []
   list_item = '* `{short_name}` <a id="{short_name}"></a>\n'
-  list_item_with_value = ('* `{short_name} = {obj!r}` '
+  list_item_with_value = ('* `{short_name} = {py_object!r}` '
                           '<a id="{short_name}"></a>\n')
   for other_member in other_members:
-    if doc_generator_visitor.maybe_singleton(other_member.obj):
+    if doc_generator_visitor.maybe_singleton(other_member.py_object):
       part = list_item_with_value.format(**other_member._asdict())
     else:
       part = list_item.format(**other_member._asdict())

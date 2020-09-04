@@ -14,10 +14,10 @@ toc:
   section:
   - title: "Basic image classification"
     path: /tutorials/keras/classification
+  - title: "Basic text classification"
+    path: /tutorials/keras/text_classification
   - title: "Text classification with TF Hub"
     path: /tutorials/keras/text_classification_with_hub
-  - title: "Text classification with preprocessed text"
-    path: /tutorials/keras/text_classification
   - title: "Regression"
     path: /tutorials/keras/regression
   - title: "Overfit and underfit"
@@ -26,21 +26,20 @@ toc:
     path: /tutorials/keras/save_and_load
   - title: "Tune hyperparameters with the Keras Tuner"
     path: /tutorials/keras/keras_tuner
-    status: new
 
 - title: "Load and preprocess data"
   style: accordion
   section:
+  - title: "Images"
+    path: /tutorials/load_data/images
+  - title: "Text"
+    path: /tutorials/load_data/text
   - title: "CSV"
     path: /tutorials/load_data/csv
   - title: "NumPy"
     path: /tutorials/load_data/numpy
   - title: "pandas.DataFrame"
     path: /tutorials/load_data/pandas_dataframe
-  - title: "Images"
-    path: /tutorials/load_data/images
-  - title: "Text"
-    path: /tutorials/load_data/text
   - title: "Unicode"
     path: /tutorials/load_data/unicode
   - title: "TF.Text"
@@ -75,8 +74,6 @@ toc:
     path: /tutorials/customization/basics
   - title: "Custom layers"
     path: /tutorials/customization/custom_layers
-  - title: "Custom training"
-    path: /tutorials/customization/custom_training
   - title: "Custom training: walkthrough"
     path: /tutorials/customization/custom_training_walkthrough
 
@@ -103,19 +100,16 @@ toc:
     path: /tutorials/images/cnn
   - title: "Image classification"
     path: /tutorials/images/classification
+  - title: "Transfer learning and fine-tuning"
+    path: /tutorials/images/transfer_learning
   - title: "Transfer learning with TF Hub"
     path: /tutorials/images/transfer_learning_with_hub
-  - title: "Transfer learning with pretrained CNN"
-    path: /tutorials/images/transfer_learning
   - title: "Data Augmentation"
     path: /tutorials/images/data_augmentation
   - title: "Image segmentation"
     path: /tutorials/images/segmentation
   - title: "Object detection with TF Hub"
-    path: https://github.com/tensorflow/hub/blob/master/examples/colab/object_detection.ipynb
-    status: external
-  - title: "Object detection API"
-    path: https://github.com/tensorflow/models/blob/master/research/object_detection/object_detection_tutorial.ipynb
+    path: https://github.com/tensorflow/hub/blob/master/examples/colab/tf2_object_detection.ipynb
     status: external
 
 - title: "Text"
@@ -134,7 +128,6 @@ toc:
   - title: "Transformer model for language understanding"
     path: /tutorials/text/transformer
   - title: "Fine tuning BERT"
-    status: New
     path: /official_models/fine_tuning_bert
 
 - title: "Structured data"
@@ -162,12 +155,23 @@ toc:
     path: /tutorials/generative/cyclegan
   - title: "Adversarial FGSM"
     path: /tutorials/generative/adversarial_fgsm
+  - title: "Intro to Autoencoders"
+    path: /tutorials/generative/autoencoder
   - title: "Variational Autoencoder"
     path: /tutorials/generative/cvae
 
 - title: "Interpretability"
   style: accordion
-  status: new
   section:
   - title: "Integrated gradients"
     path: /tutorials/interpretability/integrated_gradients
+
+- title: "Reinforcement learning"
+  style: accordion
+  status: new
+  section:
+  - title: "Actor-Critic method"
+    path: /tutorials/reinforcement_learning/actor_critic
+  - title: "TensorFlow agents"
+    status: external
+    path: /agents

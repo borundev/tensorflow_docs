@@ -42,16 +42,17 @@ from tensorflow_docs.tools.nblint.decorator import fail
 from tensorflow_docs.tools.nblint.decorator import lint
 from tensorflow_docs.tools.nblint.decorator import Options
 
-copyright_re = re.compile(
-    r"Copyright 20[1-9][0-9] The TensorFlow\s.*?\s?Authors")
+# Acceptable copyright heading for notebooks following this style.
+copyrights_re = [
+    r"Copyright 20[1-9][0-9] The TensorFlow\s.*?\s?Authors",
+    r"Copyright 20[1-9][0-9] Google"
+]
 
 
-@lint(message="TensorFlow copyright is required", scope=Options.Scope.TEXT)
+@lint(message="Copyright required", scope=Options.Scope.TEXT)
 def copyright_check(args):
-  if copyright_re.search(args["cell_source"]):
-    return True
-  else:
-    return False
+  cell_source = args["cell_source"]
+  return any(re.search(pattern, cell_source) for pattern in copyrights_re)
 
 
 license_re = re.compile("#@title Licensed under the Apache License")
@@ -252,12 +253,16 @@ def button_website(args):
 
   # Construct website URL pattern based on location of this file in repo.
   url_path = rel_path.with_suffix("")
-  this_url = f"{base_url}.*{url_path}"
+  # If run in source repo, we don't know for certain the published subsite URL.
+  # Match: base/<optional-subsite-path>/notebook-path
+  this_url = rf"{base_url}[\w\-/]*{url_path}"
 
   if is_button_cell_re.search(cell_source) and re.search(this_url, cell_source):
     return True
   else:
-    fail(f"'View on' button URL doesn't match pattern: {this_url}")
+    # If included verbatium, bracket will fail lint. That's desired.
+    url_format = f"{base_url}<OPTIONAL-SUBSITE-PATH>/{url_path}"
+    fail(f"'View on' button URL doesn't match pattern: {url_format}")
 
 
 @lint(
