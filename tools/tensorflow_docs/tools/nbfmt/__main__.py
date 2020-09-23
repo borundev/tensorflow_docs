@@ -35,7 +35,7 @@ import re
 import sys
 import textwrap
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List
 
 from absl import app
 from absl import flags
@@ -44,46 +44,91 @@ from tensorflow_docs.tools.nbfmt import notebook_utils
 
 OSS = True
 
-flags.DEFINE_bool("remove_outputs", False,
-                  "Remove output cells from the notebook")
 flags.DEFINE_integer(
     "indent", 2, "Indention level for pretty-printed JSON.", lower_bound=0)
+flags.DEFINE_bool("oss", None, "Use OSS formatting.")
+flags.DEFINE_bool("remove_outputs", False,
+                  "Remove output cells from the notebook")
 flags.DEFINE_bool("test", False,
                   "Test if the notebook is formatted (useful for CI).")
 
 FLAGS = flags.FLAGS
 
 
-def warn(msg: str) -> None:
-  """Print highlighted warning message to stderr.
+def clean_notebook(data: Dict[str, Any], nb_source: str, filepath: pathlib.Path,
+                   remove_outputs: bool, indent: int) -> bytes:
+  """The main notebook formatting logic.
 
   Args:
-    msg: String to print to console.
+    data: object representing a parsed JSON notebook.
+    nb_source: JSON string of entire notebook contents.
+    filepath: String of notebook filepath passed to the command-line.
+    remove_outputs: Boolean to clear cell output.
+    indent: Integer indicating the number of spaces to indent the JSON.
+
+  Returns:
+    A byte string for the JSON formatted notebook.
   """
-  # Use terminal codes to print color output to console.
-  print(f" \033[33m {msg}\033[00m", file=sys.stderr)
+  clean_root(data, filepath)  # Top-level notebook fields.
+  clean_cells(data, nb_source, remove_outputs)
+  update_license_cells(data)
+
+  nbjson = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=indent)
+
+  if not OSS:
+    # Serialization differences in enviroments.
+    str_replaces = {"<": r"\u003c", ">": r"\u003e", "&": r"\u0026"}
+    for str_from, str_to in str_replaces.items():
+      nbjson = nbjson.replace(str_from, str_to)
+
+  return (nbjson + "\n").encode("utf-8")
 
 
-def remove_extra_fields(data: Dict[str, Any]) -> None:
-  """Deletes extra notebook fields.
+def clean_root(data: Dict[str, Any], filepath: pathlib.Path) -> None:
+  """Deletes extra top-level notebook fields and metadata.
 
   Jupyter format spec:
   https://nbformat.readthedocs.io/en/latest/format_description.html
 
   Args:
     data: object representing a parsed JSON notebook.
+    filepath: String of notebook filepath passed to the command-line.
   """
-
-  def filter_keys(data, keep_list) -> None:
-    to_delete = set(data.keys()) - frozenset(keep_list)
-    for key in to_delete:
-      del data[key]
-
   # These top-level fields are required:
-  filter_keys(data, ["cells", "metadata", "nbformat_minor", "nbformat"])
+  notebook_utils.del_entries_except(
+      data, keep=["cells", "metadata", "nbformat_minor", "nbformat"])
   # All metadata is optional according to spec, but we use some of it.
-  # For example, this removes "language_info" and other editor-specific fields.
-  filter_keys(data["metadata"], ["accelerator", "colab", "kernelspec"])
+  notebook_utils.del_entries_except(
+      data["metadata"], keep=["accelerator", "colab", "kernelspec"])
+
+  metadata = data.get("metadata", {})
+  colab = metadata.get("colab", {})
+
+  # Set top-level notebook defaults.
+  data["nbformat"] = 4
+  data["nbformat_minor"] = 0
+
+  # Colab metadata
+  notebook_utils.del_entries_except(
+      colab, keep=["collapsed_sections", "name", "toc_visible"])
+  colab["name"] = os.path.basename(filepath)
+  colab["toc_visible"] = True
+  metadata["colab"] = colab
+
+  # Kernelspec metadata
+  kernelspec = metadata.get("kernelspec", {})
+  notebook_utils.del_entries_except(kernelspec, keep=["display_name", "name"])
+
+  supported_kernels = {"python3": "Python 3", "swift": "Swift"}
+  kernel_name = kernelspec.get("name")
+  if kernel_name not in supported_kernels:
+    kernel_name = "python3"  # Notebook defaults to Python3 (same as Colab).
+
+  kernelspec["name"] = kernel_name
+  kernelspec["display_name"] = supported_kernels[kernel_name]
+  metadata["kernelspec"] = kernelspec
+
+  data["metadata"] = metadata
 
 
 def _clean_code_cell(cell_data: Dict[str, Any], remove_outputs: bool) -> None:
@@ -93,16 +138,6 @@ def _clean_code_cell(cell_data: Dict[str, Any], remove_outputs: bool) -> None:
     cell_data: object representing a parsed JSON cell.
     remove_outputs: Boolean to clear cell output.
   """
-  # Clean cell metadata.
-  cell_meta = cell_data.get("metadata", {})
-  cell_meta.pop("executionInfo", None)
-  cell_meta.pop("ExecuteTime", None)
-
-  if "colab" in cell_meta:
-    cell_meta["colab"].pop("base_uri", None)
-
-  cell_data["metadata"] = cell_meta
-
   if remove_outputs:
     cell_data["outputs"] = []
     cell_data["execution_count"] = None
@@ -116,13 +151,36 @@ def _clean_code_cell(cell_data: Dict[str, Any], remove_outputs: bool) -> None:
     cell_data["execution_count"] = None
 
 
+def _clean_metadata_colab(cell_metadata: Dict[str, Any],
+                          remove_outputs: bool) -> None:
+  """Clean up a cell's `metadata.colab` field.
+
+  Remove all `metadata.colab` contents except for `metadata.colab.resources`, if
+  present. The Colab resources are used to embed data within the notebook and
+  can be treated like output cells (kept unless explictly removed).
+
+  Args:
+    cell_metadata: object representing the parsed JSON metadata from a cell.
+    remove_outputs: Boolean to clear cell output.
+  """
+  colab = cell_metadata.pop("colab", {})
+  # If no outputs, just clear out `metadata.colab`.
+  if remove_outputs:
+    return
+
+  # Clear around `resources` if not empty. Otherwise, clear out `metata.colab`.
+  if colab.get("resources"):
+    notebook_utils.del_entries_except(colab, keep=["resources"])
+    cell_metadata["colab"] = colab
+
+
 def clean_cells(data: Dict[str, Any], nb_source: str,
                 remove_outputs: bool) -> None:
   """Remove empty cells and clean code cells.
 
   Args:
     data: Object representing a parsed JSON notebook.
-    nb_source: String of entire notebook contents.
+    nb_source: JSON string of entire notebook contents.
     remove_outputs: Boolean True to remove code cell outputs, False to keep.
   """
   # Clear leading and trailing newlines.
@@ -134,8 +192,19 @@ def clean_cells(data: Dict[str, Any], nb_source: str,
       cell_source.pop()
     cell["source"] = cell_source
 
-  # remove empty cells
+  # Remove empty cells.
   data["cells"] = [cell for cell in data["cells"] if any(cell["source"])]
+
+  # Clean cell metadata.
+  for cell in data["cells"]:
+    cell_metadata = cell.get("metadata", {})
+    if "id" not in cell_metadata:
+      cell_metadata["id"] = notebook_utils.generate_cell_id(data["cells"])
+    notebook_utils.del_entries_except(
+        cell_metadata, keep=["id", "cellView", "colab"])
+    _clean_metadata_colab(cell_metadata, remove_outputs)
+
+    cell["metadata"] = cell_metadata
 
   # The presence of this field indicates that ouputs are already saved.
   has_outputs = True if '"output_type"' in nb_source else False
@@ -145,47 +214,10 @@ def clean_cells(data: Dict[str, Any], nb_source: str,
       _clean_code_cell(cell, remove_outputs)
 
   if has_outputs and remove_outputs:
-    warn("Removed the existing output cells.")
+    notebook_utils.warn("Removed the existing output cells.")
 
 
-def update_metadata(data: Dict[str, Any],
-                    filepath: Optional[pathlib.Path] = None) -> None:
-  """Set notebook metadata on `data` object using TF docs style.
-
-  Args:
-    data: object representing a parsed JSON notebook.
-    filepath: String of notebook filepath passed to the command-line.
-  """
-  metadata = data.get("metadata", {})
-  colab = metadata.get("colab", {})
-  # Set preferred metadata for notebook docs.
-  if filepath is not None:
-    colab["name"] = os.path.basename(filepath)
-
-  colab["provenance"] = []
-  colab["toc_visible"] = True
-  # Use Colab default that allows saved outputs in this notebook.
-  colab.pop("private_outputs", None)
-  colab.pop("last_runtime", None)  # Always remove "last_runtime".
-  metadata["colab"] = colab
-
-  # kernelspec: name: display_name
-  supported_kernels = {"python3": "Python 3", "swift": "Swift"}
-  kernel_name = metadata.get("kernelspec", {}).get("name")
-
-  if kernel_name not in supported_kernels:
-    kernel_name = "python3"  # Notebook defaults to Python3 (same as Colab).
-
-  # Use new dict to clear any other attributes.
-  metadata["kernelspec"] = {
-      "name": kernel_name,
-      "display_name": supported_kernels[kernel_name]
-  }
-
-  data["metadata"] = metadata
-
-
-def update_license_cell(data: Dict[str, Any]) -> None:
+def update_license_cells(data: Dict[str, Any]) -> None:
   """Format license cell to hide code pane from the Colab form.
 
   Args:
@@ -235,24 +267,8 @@ def format_nb(
       test_fail_notebooks.append(path)
       continue
 
-    # Set top-level notebook defaults.
-    data["nbformat"] = 4
-    data["nbformat_minor"] = 0
-
-    remove_extra_fields(data)  # Top-level fields.
-    clean_cells(data, source, remove_outputs)
-    update_metadata(data, filepath=path)
-    update_license_cell(data)
-
-    nbjson = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=indent)
-
-    if not OSS:
-      # Serialization differences in enviroments.
-      str_replaces = {"<": r"\u003c", ">": r"\u003e", "&": r"\u0026"}
-      for str_from, str_to in str_replaces.items():
-        nbjson = nbjson.replace(str_from, str_to)
-
-    expected_output = (nbjson + "\n").encode("utf-8")
+    # Returns formatted JSON byte string.
+    expected_output = clean_notebook(data, source, path, remove_outputs, indent)
 
     if test:
       # Compare formatted contents with original file contents.
@@ -287,6 +303,10 @@ def format_nb(
 def main(argv):
   if len(argv) <= 1:
     raise app.UsageError("Missing arguments.")
+
+  if FLAGS.oss is not None:
+    global OSS
+    OSS = FLAGS.oss
 
   exit_code = format_nb(
       notebooks=argv[1:],

@@ -2281,9 +2281,11 @@ def _get_defined_in(py_object: Any,
   except TypeError:  # getfile throws TypeError if py_object is a builtin.
     return None
 
+  if not obj_path.endswith(('.py', '.pyc')):
+    return None
+
   code_url_prefix = None
   for base_dir, temp_prefix in base_dirs_and_prefixes:
-
     rel_path = os.path.relpath(path=obj_path, start=base_dir)
     # A leading ".." indicates that the file is not inside `base_dir`, and
     # the search should continue.
@@ -2327,7 +2329,6 @@ def _get_defined_in(py_object: Any,
     return _FileLocation(rel_path)
   elif re.match(r'.*_pb2\.py$', rel_path):
     # The _pb2.py files all appear right next to their defining .proto file.
-
     rel_path = rel_path[:-7] + '.proto'
     return _FileLocation(
         rel_path=rel_path, url=os.path.join(code_url_prefix, rel_path))  # pylint: disable=undefined-loop-variable
@@ -2364,7 +2365,7 @@ def generate_global_index(library_name, index, reference_resolver):
       if is_class_attr(full_name, index):
         continue
     symbol_links.append(
-        (full_name, reference_resolver.python_link(full_name, full_name, '.')))
+        (full_name, reference_resolver.python_link(full_name, full_name, '..')))
 
   lines = [f'# All symbols in {library_name}', '']
   lines.append('<!-- Insert buttons and diff -->\n')
